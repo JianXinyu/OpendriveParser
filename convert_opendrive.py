@@ -1,6 +1,7 @@
 # -*- coding=utf-8 -*-
 
 import opendrive_parser_14H as opendrive_parser
+from eulerspiral import EulerSpiral
 import numpy as np
 import math
 
@@ -25,10 +26,10 @@ import geojson
 
 class Geometry():
     def __init__(self, start_position: float, heading: float, s : float, length: float):
-        self.start_position = np.array(start_position)
-        self.length = length
-        self.heading = heading
-        self.s = s
+        self.start_position = np.array(start_position)  # Start position ([x, y] inertial)
+        self.length = length    # Length of the element’s reference line
+        self.heading = heading  # Start orientation (inertial heading)
+        self.s = s              # s-coordinate of start position
 
     def calc_position(self, s_pos):
         pass
@@ -84,10 +85,37 @@ class Poly3(Geometry):
 
         return (self.start_position + np.array([srot, trot]), self.heading + tangent)
 
-        
+class Spiral(Geometry):
+    """This record describes a spiral as part of the road’s reference line.
+
+    For this type of spiral, the curvature
+    change between start and end of the element is linear.
+
+    (Section 5.3.4.1.2 of OpenDRIVE 1.4)
+    """
+    def __init__(self, start_position, heading, s, length, curvStart, curvEnd):
+        self._curvStart = curvStart
+        self._curvEnd = curvEnd
+        super().__init__(start_position=start_position, heading=heading, s = s, length=length)       
+        self._spiral = EulerSpiral.createFromLengthAndCurvature(
+            self.length, self._curvStart, self._curvEnd
+        )
+
+    def calc_position(self, s_pos):
+        (x,y,t) = self._spiral.calc(
+            s_pos,
+            self.start_position[0],
+            self.start_position[1],
+            self._curvStart,
+            self.heading
+        )
+
+        return (np.array([x,y]), t)
+
+
 class ConvertOpenDrive:
     def __init__(self, open_drive, interval:float = 0.5):
-        self.open_drive = open_drive
+        self.open_drive = open_drive # openDRIVE原始文件
         self.interval = interval
         # 路段的所有插值点
         # self.road_inters = []
@@ -104,6 +132,7 @@ class ConvertOpenDrive:
         # self.road_geometry_inters = {}
         # self.
 
+    # 插值函数
     def calc_interpolates(self, pos_offset0, pos_offset1):
         vals = []
         p0 = pos_offset0
@@ -155,7 +184,8 @@ class ConvertOpenDrive:
                 # print('is poly3')
                 self.road_geometrys.append(Poly3(start_position, heading, start_pos, length, geometry.poly3.a, geometry.poly3.b, geometry.poly3.c, geometry.poly3.d))
             elif geometry.spiral is not None:
-                print('is spiral')
+                # print('is spiral')
+                self.road_geometrys.append(Spiral(start_position,heading, start_pos, length, geometry.spiral.curvStart, geometry.spiral.curvEnd))
             elif geometry.paramPoly3 is not None:
                 print('is paramPoly3')
 
@@ -222,7 +252,8 @@ class ConvertOpenDrive:
         parts_pos.append(self.road_length)    
         
         part_index = -1
-        for idx, spos in enumerate(parts_pos):
+        # TODO check
+        for idx, spos in enumerate(parts_pos[:-1]):
             epos = parts_pos[idx+1]
             if r_pos >= spos and r_pos <= epos:
                 part_index = idx
@@ -589,7 +620,7 @@ class ConvertOpenDrive:
                 props['subtype'] = signal.subtype
                 props['value'] = signal.value
                 props['text'] = signal.text
-                props['hOffset'] = signal.hOffset + tangent
+                props['hOffset'] = signal.hOffset + tangent if signal.hOffset is not None else tangent
                 props['pitch'] = signal.pitch
                 props['roll'] = signal.roll
                 props['signal_tag'] = 'signal'                 
@@ -721,7 +752,7 @@ class ConvertOpenDrive:
             
 if __name__ == "__main__":
 
-    xodr_file = r'sample_largezone.xodr'
+    xodr_file = r'meta.xodr'
     opendrive = opendrive_parser.parse(xodr_file, silence=True)
 
     convert = ConvertOpenDrive(opendrive, 0.5)
