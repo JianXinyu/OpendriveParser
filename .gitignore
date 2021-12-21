@@ -1,0 +1,5 @@
+*.txt
+*.json
+*.xodr
+tmp/
+__pycache__
